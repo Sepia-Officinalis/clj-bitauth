@@ -56,6 +56,13 @@ goog.require('secp256k1.sjcl.bn.prime.Field');
  * @param {string|number|secp256k1.sjcl.bn} y The y coordinate.
  */
 secp256k1.sjcl.ecc.ECPoint = function (curve, x, y) {
+
+    /**
+     * Whether this point is the identity point or not
+     * @type {boolean}
+     */
+    this.isIdentity = !!(x === undefined || x === null);
+
     /**
      * X coordinate for curve point
      * @const
@@ -71,13 +78,6 @@ secp256k1.sjcl.ecc.ECPoint = function (curve, x, y) {
     this.y = x ? (y instanceof secp256k1.sjcl.bn ? y : new secp256k1.sjcl.bn(y)) : null;
 
     /**
-     * Whether this is the point at infinity (it is so this is true
-     * @const
-     * @type {boolean}
-     */
-    this.isIdentity = x ? false : true;
-
-    /**
      * The elliptic curve for this point.
      * @type {!secp256k1.sjcl.ecc.ECPoint.curve}
      * @const
@@ -85,7 +85,7 @@ secp256k1.sjcl.ecc.ECPoint = function (curve, x, y) {
     this.curve = curve;
 
     /**
-     * Array of multiples of this point.  Lazily initialized.
+     * Array of multiples of this point.  Lazily initialized by the `.multiples` method.
      * @type {Array<secp256k1.sjcl.ecc.ECPoint>}
      * @private
      */
@@ -102,14 +102,15 @@ secp256k1.sjcl.ecc.ECPoint.identity = function (curve) {
 };
 
 /**
- * Multiply this point by k, added to affine2*k2, and return the answer in Jacobian coordinates.
- * @param {secp256k1.sjcl.bn|number|string} k The coefficient to multiply this by.
+ * Multiply a point affine1 by k, added to affine2 multiplied by k2, and return the answer in affine coordinates.
+ * @param {secp256k1.sjcl.bn|number|string} k1 The coefficient to multiply this by.
+ * @param {secp256k1.sjcl.ecc.ECPoint} affine1 The first point in affine coordinates.
  * @param {secp256k1.sjcl.bn|number|string} k2 The coefficient to multiply affine2 this by.
  * @param {secp256k1.sjcl.ecc.ECPoint} affine2 The other point in affine coordinates.
  * @return {secp256k1.sjcl.ecc.ECPoint} The result of the multiplication and addition.
  */
-secp256k1.sjcl.ecc.ECPoint.prototype.mult2 = function (k, k2, affine2) {
-    return this.toJac().mult2(k, this, k2, affine2).toAffine();
+secp256k1.sjcl.ecc.ECPoint.sumOfTwoMultiplies = function (k1, affine1, k2, affine2) {
+    return secp256k1.sjcl.ecc.ECPoint.Jac.sumOfTwoMultiplies(k1, affine1, k2, affine2).toAffine();
 };
 
 /**
@@ -117,8 +118,8 @@ secp256k1.sjcl.ecc.ECPoint.prototype.mult2 = function (k, k2, affine2) {
  * @param {number|string|secp256k1.sjcl.bn} k The coefficient to multiply by.
  * @return {secp256k1.sjcl.ecc.ECPoint} The result of the multiplication as in affine coordinates.
  */
-secp256k1.sjcl.ecc.ECPoint.prototype.mult = function (k) {
-    return this.toJac().mult(k, this).toAffine();
+secp256k1.sjcl.ecc.ECPoint.prototype.multiply = function (k) {
+    return this.toJac().multiply(k, this).toAffine();
 };
 
 //noinspection JSUnusedGlobalSymbols
@@ -129,20 +130,20 @@ secp256k1.sjcl.ecc.ECPoint.prototype.mult = function (k) {
 secp256k1.sjcl.ecc.ECPoint.prototype.isValid = function () {
     var field = this.curve.field,
         fullReduce = secp256k1.sjcl.bn.prime.fullReduce,
-        y2Expected = fullReduce(this.curve.b.add(this.x.mul(this.curve.a.add(this.x.square()))), field),
+        y2Expected = fullReduce(this.curve.b.add(this.x.multiply(this.curve.a.add(this.x.square()))), field),
         y2Actual = fullReduce(this.y.square(), field);
     return y2Actual.equals(y2Expected);
 };
 
 /**
  * Lazily initialize an array of the first 16 multiples of this ECPoint and return them.
- * @returns {Array<secp256k1.sjcl.ecc.ECPoint>} The multiples of this point from 0 to 15 in affine coordinates.
+ * @returns {!Array<secp256k1.sjcl.ecc.ECPoint>} The multiples of this point from 0 to 15 in affine coordinates.
  */
 secp256k1.sjcl.ecc.ECPoint.prototype.multiples = function () {
     if (this._multiples === null) {
         var i, j;
         this._multiples = new Array(16);
-        j = this.toJac().doubl();
+        j = this.toJac().twice();
         this._multiples[0] = secp256k1.sjcl.ecc.ECPoint.identity(this.curve);
         this._multiples[1] = new secp256k1.sjcl.ecc.ECPoint(this.curve, this.x, this.y);
         this._multiples[2] = j.toAffine();
@@ -184,41 +185,33 @@ secp256k1.sjcl.ecc.ECPoint.prototype.negate = function () {
  * @param {string|number|secp256k1.sjcl.bn} z The z coordinate.
  */
 secp256k1.sjcl.ecc.ECPoint.Jac = function (curve, x, y, z) {
-    if (x === undefined || x === null) {
-        this.isIdentity = true;
-    } else {
-        this.x = x;
-        this.y = y;
-        this.z = z;
-        this.isIdentity = false;
-    }
+
     /**
-     * X coordinate for curve point
+     * Whether this point is the identity point or not.
+     * @type {boolean}
+     */
+    this.isIdentity = !!(x === undefined || x === null);
+
+    /**
+     * X coordinate for curve point.
      * @const
      * @type {secp256k1.sjcl.bn}
      */
     this.x = x ? (x instanceof secp256k1.sjcl.bn ? x : new secp256k1.sjcl.bn(x)) : null;
 
     /**
-     * Y coordinate for curve point
+     * Y coordinate for curve point.
      * @const
      * @type {secp256k1.sjcl.bn}
      */
     this.y = x ? (y instanceof secp256k1.sjcl.bn ? y : new secp256k1.sjcl.bn(y)) : null;
 
     /**
-     * Z coordinate for curve point (assuming affine coordinates)
+     * Z coordinate for curve point.
      * @const
      * @type {secp256k1.sjcl.bn}
      */
     this.z = x ? (z instanceof secp256k1.sjcl.bn ? z : new secp256k1.sjcl.bn(z)) : null;
-
-    /**
-     * Whether this is the point at infinity (it is so this is true
-     * @const
-     * @type {boolean}
-     */
-    this.isIdentity = x ? false : true;
 
     /**
      * The elliptic curve for this point.
@@ -229,29 +222,29 @@ secp256k1.sjcl.ecc.ECPoint.Jac = function (curve, x, y, z) {
 };
 
 /**
- * Multiply this point by k, added to affine2*k2, and return the answer in Jacobian coordinates.
+ * Multiply a point affine1 by k1, add affine2*k2, and return the answer in affine coordinates.
  * @param {secp256k1.sjcl.bn|number|string} k1 The coefficient to multiply this by.
- * @param {!secp256k1.sjcl.ecc.ECPoint} affine This point in affine coordinates.
+ * @param {!secp256k1.sjcl.ecc.ECPoint} affine1 This point in affine coordinates.
  * @param {secp256k1.sjcl.bn|number|string} k2 The coefficient to multiply affine2 this by.
  * @param {!secp256k1.sjcl.ecc.ECPoint} affine2 The other point in affine coordinates.
  * @return {secp256k1.sjcl.ecc.ECPoint.Jac} The result of the multiplication and addition, in Jacobian coordinates.
  */
-secp256k1.sjcl.ecc.ECPoint.Jac.prototype.mult2 = function (k1, affine, k2, affine2) {
+secp256k1.sjcl.ecc.ECPoint.Jac.sumOfTwoMultiplies = function (k1, affine1, k2, affine2) {
     var k1limbs = k1 instanceof secp256k1.sjcl.bn ?
             k1.normalize().limbs :
             new secp256k1.sjcl.bn(k1).limbs,
         k2limbs = k2 instanceof secp256k1.sjcl.bn ?
             k2.normalize().limbs :
-            new secp256k1.sjcl.bn(k1limbs).limbs;
+            new secp256k1.sjcl.bn(k2).limbs;
 
-    var i, j, out = new secp256k1.sjcl.ecc.ECPoint(this.curve, null, null).toJac(), m1 = affine.multiples(),
+    var i, j, out = new secp256k1.sjcl.ecc.ECPoint(affine1.curve, null, null).toJac(), m1 = affine1.multiples(),
         m2 = affine2.multiples(), l1, l2;
 
     for (i = Math.max(k1limbs.length, k2limbs.length) - 1; i >= 0; i--) {
         l1 = k1limbs[i] | 0;
         l2 = k2limbs[i] | 0;
         for (j = secp256k1.sjcl.bn.radix - 4; j >= 0; j -= 4) {
-            out = out.doubl().doubl().doubl().doubl().add(m1[l1 >> j & 0xF]).add(m2[l2 >> j & 0xF]);
+            out = out.twice().twice().twice().twice().add(m1[l1 >> j & 0xF]).add(m2[l2 >> j & 0xF]);
         }
     }
 
@@ -269,12 +262,12 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.isValid = function () {
         fullReduce = secp256k1.sjcl.bn.prime.fullReduce,
         z2 = reduce(this.z.square(), field),
         z4 = reduce(z2.square(), field),
-        z6 = reduce(z4.mul(z2), field),
+        z6 = reduce(z4.multiply(z2), field),
         y2Actual = fullReduce(this.y.square(), field),
         y2Expected = fullReduce(
-            this.curve.b.mul(z6).add(
-                this.x.mul(
-                    this.curve.a.mul(z4).add(this.x.square()))), field);
+            this.curve.b.multiply(z6).add(
+                this.x.multiply(
+                    this.curve.a.multiply(z4).add(this.x.square()))), field);
     return y2Actual.equals(y2Expected);
 };
 
@@ -284,7 +277,7 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.isValid = function () {
  * @param {secp256k1.sjcl.ecc.ECPoint} affine This point in affine coordinates.
  * @return {secp256k1.sjcl.ecc.ECPoint.Jac} The result of the multiplication, in Jacobian coordinates.
  */
-secp256k1.sjcl.ecc.ECPoint.Jac.prototype.mult = function (k, affine) {
+secp256k1.sjcl.ecc.ECPoint.Jac.prototype.multiply = function (k, affine) {
     var limbs = k instanceof secp256k1.sjcl.bn ?
         k.normalize().limbs :
         new secp256k1.sjcl.bn(k).limbs;
@@ -295,7 +288,7 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.mult = function (k, affine) {
 
     for (i = limbs.length - 1; i >= 0; i--) {
         for (j = secp256k1.sjcl.bn.radix - 4; j >= 0; j -= 4) {
-            out = out.doubl().doubl().doubl().doubl().add(multiples[limbs[i] >> j & 0xF]);
+            out = out.twice().twice().twice().twice().add(multiples[limbs[i] >> j & 0xF]);
         }
     }
     return out;
@@ -329,30 +322,30 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.add = function (p) {
     }
 
     sz2 = reduce(this.z.square(), field);
-    c = reduce(p.x.mul(sz2).subM(this.x), field);
+    c = reduce(p.x.multiply(sz2).subM(this.x), field);
 
     // Also check c.equals(0)?????
     if (c.equals(field.modulus, false)) {
-        if (this.y.equals(p.y.mul(sz2.mul(this.z)))) {
-            return this.doubl();
+        if (this.y.equals(p.y.multiply(sz2.multiply(this.z)))) {
+            return this.twice();
         } else {
             // inverses
             return new secp256k1.sjcl.ecc.ECPoint.Jac(this.curve, null, null, null);
         }
     }
 
-    d = reduce(p.y.mul(sz2.mul(this.z)).subM(this.y), field);
+    d = reduce(p.y.multiply(sz2.multiply(this.z)).subM(this.y), field);
     c2 = reduce(c.square(), field);
 
     x1 = reduce(d.square(), field);
-    x2 = reduce(c.square().mul(c).addM(this.x.add(this.x).mul(c2)), field);
+    x2 = reduce(c.square().multiply(c).addM(this.x.add(this.x).multiply(c2)), field);
     x = reduce(x1.subM(x2), field);
 
-    y1 = reduce(this.x.mul(c2).subM(x).mul(d), field);
-    y2 = reduce(this.y.mul(c.square().mul(c)), field);
+    y1 = reduce(this.x.multiply(c2).subM(x).multiply(d), field);
+    y2 = reduce(this.y.multiply(c.square().multiply(c)), field);
     y = reduce(y1.subM(y2), field);
 
-    z = reduce(this.z.mul(c), field);
+    z = reduce(this.z.multiply(c), field);
 
     return new secp256k1.sjcl.ecc.ECPoint.Jac(this.curve, x, y, z);
 };
@@ -369,19 +362,19 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.toAffine = function () {
         fullReduce = secp256k1.sjcl.bn.prime.fullReduce,
         reduce = secp256k1.sjcl.bn.prime.reduce,
         field = this.curve.field,
-        zi = this.z.inverseMod(modulus),
+        zi = this.z.modInverse(modulus),
         zi2 = reduce(zi.square(), field);
     return new secp256k1.sjcl.ecc.ECPoint(
         this.curve,
-        fullReduce(this.x.mul(zi2), field),
-        fullReduce(this.y.mul(zi2.mul(zi)), field));
+        fullReduce(this.x.multiply(zi2), field),
+        fullReduce(this.y.multiply(zi2.multiply(zi)), field));
 };
 
 /**
  * Doubles this point.
  * @return {secp256k1.sjcl.ecc.ECPoint.Jac} The doubled point.
  */
-secp256k1.sjcl.ecc.ECPoint.Jac.prototype.doubl = function () {
+secp256k1.sjcl.ecc.ECPoint.Jac.prototype.twice = function () {
     if (this.isIdentity) {
         return this;
     }
@@ -389,11 +382,11 @@ secp256k1.sjcl.ecc.ECPoint.Jac.prototype.doubl = function () {
         field = this.curve.field,
         y2 = reduce(this.y.square(), field),
         z4 = reduce(this.z.square().square(), field),
-        s = reduce(y2.mul(this.x), field).mul(4),
-        m = reduce(this.x.square().mul(3).addM(this.curve.a.mul(z4)), field),
+        s = reduce(y2.multiply(this.x), field).multiply(4),
+        m = reduce(this.x.square().multiply(3).addM(this.curve.a.multiply(z4)), field),
         x = reduce(m.square().subM(s.add(s)), field),
-        y = reduce(m.mul(s.subM(x)).subM(y2.square().mul(8)), field),
-        z = reduce(this.y.add(this.y).mul(this.z), field);
+        y = reduce(m.multiply(s.subM(x)).subM(y2.square().multiply(8)), field),
+        z = reduce(this.y.add(this.y).multiply(this.z), field);
     return new secp256k1.sjcl.ecc.ECPoint.Jac(this.curve, x, y, z);
 };
 

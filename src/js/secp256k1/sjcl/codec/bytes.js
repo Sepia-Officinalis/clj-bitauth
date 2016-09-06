@@ -44,12 +44,52 @@ goog.provide('secp256k1.sjcl.codec.bytes');
 goog.require('secp256k1.sjcl.bitArray');
 
 /**
+ * Determines if something is a integer or not.
+ * @param {*} n
+ * @returns {boolean}
+ */
+function isInt(n) {
+    return (n % 1 === 0);
+}
+
+/**
+ * Determines if something is a byte or not.
+ * @param {*} n
+ * @returns {boolean}
+ */
+secp256k1.sjcl.codec.bytes.isByte = function (n) {
+    return isInt(n) && (0 <= n) && (n <= 255);
+};
+
+/**
+ * Determines if something is an array of bytes or not.
+ * @param {*} data
+ * @returns {boolean}
+ */
+secp256k1.sjcl.codec.bytes.isByteArrayLike = function(data) {
+    if (typeof data === "undefined"
+        || typeof (data.length) !== "number"
+        || !isInt(data.length)) {
+        return false;
+    }
+    for (var i in data) {
+        if (!data.hasOwnProperty(i)) {
+            continue;
+        }
+        if (!isInt(i) || !secp256k1.sjcl.codec.bytes.isByte(data[i])) {
+            return false;
+        }
+    }
+    return true;
+};
+
+/**
  * Convert an array of signed 32 bit words to an array of bytes.
  * @param {Array<number>} arr Signed 32 bit array of numbers to convert.
  * @return {Array<number>} A byte array with the same data as the input.
  */
 secp256k1.sjcl.codec.bytes.fromBits = function (arr) {
-    var bl = sjcl.bitArray.bitLength(arr),
+    var bl = secp256k1.sjcl.bitArray.bitLength(arr),
         out = new Array(bl / 8), i, tmp;
     for (i = 0; i < bl / 8; i++) {
         if ((i & 3) === 0) {
@@ -77,7 +117,7 @@ secp256k1.sjcl.codec.bytes.toBits = function (bytes) {
     }
     //noinspection JSBitwiseOperatorUsage
     if (i & 3) {
-        out[j] = sjcl.bitArray.partial(8 * (i & 3), tmp);
+        out[j] = secp256k1.sjcl.bitArray.partial(8 * (i & 3), tmp);
     }
     return out;
 };

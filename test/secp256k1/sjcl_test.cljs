@@ -1,7 +1,7 @@
 (ns secp256k1.sjcl-test
   (:require
-    [clojure.test :refer [is use-fixtures testing are]]
-    [devcards.core :refer [deftest defcard]]
+    [clojure.test :refer-macros [is use-fixtures testing are]]
+    [devcards.core :refer-macros [deftest defcard]]
     [secp256k1.math :refer [modular-square-root]]
     [secp256k1.sjcl.bn]
     [secp256k1.core]
@@ -20,13 +20,14 @@
     (is (.equals (.square (bn. 2)) (new bn "4"))))
   (testing "Multiplication works"
     (is (= (bn. 4)
-          (-> (new bn 2) (.mul 2)))))
-  (testing "Modular Multiplication works"
-    (is (= (bn. 1)
-          (-> (new bn 2) (.mulmod 2 3)))))
+          (-> (new bn 2) (.multiply 2)))))
   (testing "Can copy"
     (is (= (bn. 2)
-          (-> (new bn 2) .copy)))))
+          (-> (new bn 2) .copy))))
+  (testing "Can exponentiate"
+    (is (= (-> 6 bn. (.pow 46))
+          (.multiply (-> 3 bn. (.pow 46))
+            (-> 2 bn. (.pow 46)))))))
 
 
 (deftest bn-equality-testing
@@ -37,11 +38,21 @@
     (is (= (bn. 1) (new bn "1")))
     (is (= (bn. "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
           (new bn "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")))
+    (is (= (bn. "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")
+          (-> "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f" bn. .toBits secp256k1.sjcl.bn/fromBits))
+      "fromBits is the inverse of .toBits")
     (is (= (-> "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f"
              bn.
              .toBits
              secp256k1.sjcl.bn/fromBits)
           (new bn "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f")))))
+
+(deftest bn-montgomery-exponentiation
+  (testing "Montgomery exponentiation agrees with conventional modular exponentiation"
+    (is (= (-> 2 bn. (.modPow 100 prime/p256k.modulus))
+          (-> 2 bn. (.montgomeryModPow 100 prime/p256k.modulus))))
+    (is (= (-> "0xfffffffffffffffffffffffffffffffffffffffff" bn. (.modPow 100 prime/p256k.modulus))
+          (-> "0xfffffffffffffffffffffffffffffffffffffffff" bn. (.montgomeryModPow 100 prime/p256k.modulus))))))
 
 (deftest prime-field-test
   (testing "Prime fields let you construct points that inherit from bn"
@@ -54,28 +65,28 @@
           (-> (bn. 2) .toBits secp256k1.sjcl.bn/fromBits))))
   (testing "Multiplication works for Field points"
     (is (= (bn. 4)
-          (-> (bn. 2) (.mul 2)))))
+          (-> (bn. 2) (.multiply 2)))))
   (testing "Power works for Field points"
     (is (= "0x100000"
-          (-> (bn. 2) (.power 20) .toString)))
+          (-> (bn. 2) (.pow 20) .toString)))
     (is (= "0x10000000000"
-          (-> (bn. 2) (.power 40) .toString)))
+          (-> (bn. 2) (.pow 40) .toString)))
     (is (= "0x10000000000000000000000000"
-          (-> (bn. 2) (.power 100) .toString)))
+          (-> (bn. 2) (.pow 100) .toString)))
     (is (= "0x100000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 200) .toString)))
+          (-> (bn. 2) (.pow 200) .toString)))
     (is (= "0x100000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 200) .normalize .toString)))
+          (-> (bn. 2) (.pow 200) .normalize .toString)))
     (is (= "0x100000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 200) (prime/reduce prime/p256k) .toString)))
+          (-> (bn. 2) (.pow 200) (prime/reduce prime/p256k) .toString)))
     (is (= "0x100000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 200) (prime/fullReduce prime/p256k)  .toString)))
+          (-> (bn. 2) (.pow 200) (prime/fullReduce prime/p256k)  .toString)))
     (is (= "0x1000000000000000000000000000000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 300) .toString)))
+          (-> (bn. 2) (.pow 300) .toString)))
     (is (= "0x1000000000000000000000000000000000000000000000000000000000000000000000000000"
-          (-> (bn. 2) (.power 300) .normalize .toString)))
+          (-> (bn. 2) (.pow 300) .normalize .toString)))
     (is (= "0x1000003d100000000000"
-          (-> (bn. 2) (.powermod 300 prime/p256k.modulus) .toString))))
+          (-> (bn. 2) (.modPow 300 prime/p256k.modulus) .toString))))
   (testing "Fermat's little theorem holds"
     (is (instance? bn prime/p256k.modulus)
       "Modulus is a BigNum")
@@ -84,30 +95,30 @@
     (is (= secp256k1.sjcl.bn.ONE
           (->
             (bn. 2)
-            (.powermod (.sub prime/p256k.modulus 1) prime/p256k.modulus))))
+            (.modPow (.sub prime/p256k.modulus 1) prime/p256k.modulus))))
     (is (= secp256k1.sjcl.bn.ONE
           (->
             (bn. 123123)
-            (.powermod (.sub prime/p256k.modulus 1) prime/p256k.modulus))))
+            (.modPow (.sub prime/p256k.modulus 1) prime/p256k.modulus))))
     )
   (testing "Modular inverse works"
     (is (= secp256k1.sjcl.bn.ONE
           (->
             (bn. 2)
-            (.powermod (.sub prime/p256k.modulus 2) prime/p256k.modulus)
-            (.mul 2)
+            (.modPow (.sub prime/p256k.modulus 2) prime/p256k.modulus)
+            (.multiply 2)
             (.mod prime/p256k.modulus))))
     (is (= secp256k1.sjcl.bn.ONE
           (->
             (bn. 2)
-            (.inverseMod prime/p256k.modulus)
-            (.mul 2)
+            (.modInverse prime/p256k.modulus)
+            (.multiply 2)
             (.mod prime/p256k.modulus))))
     (is (= secp256k1.sjcl.bn.ONE
           (->
             (bn. 123123213)
-            (.inverseMod prime/p256k.modulus)
-            (.mul 123123213)
+            (.modInverse prime/p256k.modulus)
+            (.multiply 123123213)
             (.mod prime/p256k.modulus))))))
 
 (deftest ECC-tests
@@ -124,27 +135,27 @@
           (-> ecc-curves/k256.G .-x .toString))))
   (testing "Can Double Jacobian point"
     (is (= "0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"
-          (-> ecc-curves/k256.G .toJac .doubl .toAffine .-x .toString))
+          (-> ecc-curves/k256.G .toJac .twice .toAffine .-x .toString))
       "Can convert to Jacobian Point, Double and Convert and Back and take x coordinate")
     (is (= "0x1ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a"
-          (-> ecc-curves/k256.G .toJac .doubl .toAffine .-y .toString))
+          (-> ecc-curves/k256.G .toJac .twice .toAffine .-y .toString))
       "Can convert to Jacobian Point, Double and Convert and Back and take y coordinate")
     (is (not=
           ecc-curves/k256.G
-          (-> ecc-curves/k256.G .toJac .doubl .toAffine))
+          (-> ecc-curves/k256.G .toJac .twice .toAffine))
       "A sad path for equality: the generator point isn't equal to its doubling"))
   (testing "Adding a point to itself is the same as doubling"
     (is (= (let [G-Jac (.toJac ecc-curves/k256.G)]
             (-> G-Jac (.add ecc-curves/k256.G) .toAffine .-x .toString))
           (let [G-Jac (.toJac ecc-curves/k256.G)]
-            (-> G-Jac .doubl .toAffine .-x .toString))
+            (-> G-Jac .twice .toAffine .-x .toString))
           "0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5")))
   (testing "Can add a point to its double"
     (is (= (let [G-Jac (.toJac ecc-curves/k256.G)]
-            (-> G-Jac .doubl (.add ecc-curves/k256.G) .toAffine .-x .toString))
+            (-> G-Jac .twice (.add ecc-curves/k256.G) .toAffine .-x .toString))
           "0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"))
     (is (= (let [G-Jac (.toJac ecc-curves/k256.G)]
-            (-> G-Jac .doubl (.add ecc-curves/k256.G) .toAffine .-y .toString))
+            (-> G-Jac .twice (.add ecc-curves/k256.G) .toAffine .-y .toString))
           "0x388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672")))
   (testing "Can get multiples of a point"
     (is (= true
@@ -185,13 +196,21 @@
               (.add (-> G-Jac .negate .toAffine))
               .toAffine)))
       "Adding a point to its inverse (calculated using Jacobian coordinates) yields the identity"))
+  (testing "Can run sumOfTwoMultiplies on a point"
+    (is (= (-> ecc-curves/k256.G
+             (.multiply 3)
+             .toJac
+             (.add (.multiply ecc-curves/k256.G 5))
+             .toAffine
+             .-x .toString)
+          (-> (ecc-ecpoint/sumOfTwoMultiplies 3 ecc-curves/k256.G 5 ecc-curves/k256.G) .-x .toString))))
   (testing "Can multiply a point"
     (is (= "0x4a5169f673aa632f538aaa128b6348536db2b637fd89073d49b6a23879cdb3ad"
-          (-> ecc-curves/k256.G (.mult 1000) .-x .toString))))
+          (-> ecc-curves/k256.G (.multiply 1000) .-x .toString))))
   (testing "Can check if a point is valid or not"
     (is (.isValid ecc-curves/k256.G)
       "Generator point is valid")
-    (is (.isValid (.mult ecc-curves/k256.G "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"))
+    (is (.isValid (.multiply ecc-curves/k256.G "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF"))
       "Generator • 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF is valid")
     (is (not (.isValid (ECPoint. ecc-curves/k256 123 123)))
       "Sad Path: Silly point is not valid")

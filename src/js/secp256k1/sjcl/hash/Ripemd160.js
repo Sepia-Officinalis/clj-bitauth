@@ -61,7 +61,6 @@ secp256k1.sjcl.hash.Ripemd160 = function() {
  * Swap the endianess of a 32 bit integer argument
  * @param {number} val Number to have endianness swapped.
  * @return {number} The swapped endianness.
- * @private
  */
 function swap32(val) {
     return ((val & 0xFF) << 24) |
@@ -157,7 +156,6 @@ secp256k1.sjcl.hash.Ripemd160.prototype.digest = function() {
  * @param {number} x Number to rotate.
  * @param {number} n Bits to rotate by.
  * @return {number} Rotated number.
- * @private
  */
 function rotl (x, n) {
     return (x << n) | (x >>> (32 - n));

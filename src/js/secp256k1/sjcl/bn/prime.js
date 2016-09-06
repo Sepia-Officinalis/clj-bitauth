@@ -3,7 +3,7 @@
 //
 // ---------------------------------------------------------------------
 //
-// http=//opensource.org/licenses/BSD-2-Clause
+// http://opensource.org/licenses/BSD-2-Clause
 //
 // Copyright (c) 2009-2015, Emily Stark, Mike Hamburg and Dan Boneh at
 // Stanford University. All rights reserved.

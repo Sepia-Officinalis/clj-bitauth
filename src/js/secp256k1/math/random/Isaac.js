@@ -30,19 +30,20 @@
  * Algorithm and original source code can be found at:
  * https://github.com/rubycon/isaac.js
  *
- * ISAAC is a CSPRNG designed by Robert J. Jenkins Jr. in 1996
- * and is based on RC4.
+ * ISAAC is a cryptographic, secure pseudo-random number generator
+ * designed by Robert J. Jenkins Jr. in 1996, and is based on RC4.
  * It is designed to be fast and secure.
- * isaac.js is fully compatible with the original 32-bit integer
+ * Isaac.js is fully compatible with the original 32-bit integer
  * arithmetic implementations of ISAAC.
  *
- * ISAAC can generate cryptographically secure pseudorandom numbers
+ * ISAAC can generate cryptographically secure pseudo-random numbers
  * from an input but does not provide any entropy source.
- * It's the responsability of the user to seed ISAAC with a
+ * It's the responsibility of the user to seed ISAAC with a
  * strong entropy source.
  *
  *
  * Usage:
+ *
  * <code>
  *   var isaac = new secp256k1.math.random.Isaac();
  *   isaac.seed(5);
@@ -52,6 +53,18 @@
  */
 
 goog.provide('secp256k1.math.random.Isaac');
+
+/**
+ * 32 bit integer safe adder
+ * @param {number} x 32 bit integer word
+ * @param {number} y 32 bit integer word
+ * @returns {number}
+ */
+function add(x, y) {
+    var lsb = (x & 0xffff) + (y & 0xffff),
+        msb = (x >>> 16) + (y >>> 16) + (lsb >>> 16);
+    return (msb << 16) | (lsb & 0xffff);
+}
 
 /**
  * @constructor
@@ -67,18 +80,11 @@ secp256k1.math.random.Isaac = function () {
         gnt = 0, // generation counter
         this_isaac = this;
 
-
-    /* private: 32-bit integer safe adder */
-    function add(x, y) {
-        var lsb = (x & 0xffff) + (y & 0xffff),
-            msb = (x >>> 16) + (y >>> 16) + (lsb >>> 16);
-
-        return (msb << 16) | (lsb & 0xffff);
-    }
-
-
-    /* public: initialisation */
-    function reset() {
+    /**
+     * (Re-)Initializer
+     * @returns {secp256k1.math.random.Isaac}
+     */
+    this.reset = function() {
         var i;
         acc = brs = cnt = 0;
 
@@ -88,11 +94,15 @@ secp256k1.math.random.Isaac = function () {
         gnt = 0;
 
         return this_isaac;
-    }
+    };
 
 
-    /* public: isaac generator, n = number of run */
-    function prng(n) {
+    /**
+     * Update internal registers with a new random 32-bit word.
+     * @param {number=} n Number of the run
+     * @returns {secp256k1.math.random.Isaac}
+     */
+    function update (n) {
         var i, x, y;
 
         n = (n && typeof n === "number") ? Math.abs(Math.floor(n)) : 1;
@@ -124,6 +134,7 @@ secp256k1.math.random.Isaac = function () {
                 acc = add(m[(i + 128) & 0xff], acc);
                 x = m[i];
                 m[i] = y = add(m[(x >>> 2) & 0xff], add(acc, brs));
+                //noinspection JSSuspiciousNameCombination
                 r[i] = brs = add(m[(y >>> 10) & 0xff], x);
             }
         }
@@ -131,9 +142,12 @@ secp256k1.math.random.Isaac = function () {
         return this_isaac;
     }
 
-
-    /* public: seeding function */
-    function seed(s) {
+    /**
+     * Seed this RNG with a value
+     * @param {number|Array<number>} s Seed value
+     * @returns {secp256k1.math.random.Isaac}
+     */
+    this.seed = function (s) {
         var a, b, c, d, e, f, g, h, i;
 
 
@@ -147,7 +161,7 @@ secp256k1.math.random.Isaac = function () {
         }
 
         if (s instanceof Array) {
-            reset();
+            this_isaac.reset();
 
             for (i = 0; i < s.length; i += 1) {
                 r[i & 0xff] += (typeof s[i] === "number") ? s[i] : 0;
@@ -241,7 +255,7 @@ secp256k1.math.random.Isaac = function () {
             }
         }
 
-        prng();
+        update();
 
 
         /* fill in the first set of results */
@@ -250,38 +264,23 @@ secp256k1.math.random.Isaac = function () {
 
         /* prepare to use the first set of results */
         return this_isaac;
-    }
+    };
 
 
-    seed((Math.random() * 0xffffffff) ^ Date.now());
+    this.seed((Math.random() * 0xffffffff) ^ Date.now());
 
-
-    /* public: return a random unsigned 32 bit integer */
-    function rand() {
+    //noinspection JSUnusedGlobalSymbols
+    /**
+     * Generate a new random number
+     * @returns {number} A random unsigned 32 bit integer
+     */
+    this.rand = function () {
         gnt -= 1;
         if (0 !== gnt + 1) {
-            prng();
+            update();
             gnt = 255;
         }
 
         return r[gnt] >>> 0;
-    }
-
-
-    /* public: return internals in an object*/
-    function internals() {
-        return {
-            a: acc,
-            b: brs,
-            c: cnt,
-            m: m,
-            r: r
-        };
-    }
-
-    this.reset = reset;
-    this.seed = seed;
-    this.prng = prng;
-    this.rand = rand;
-    this.internals = internals;
+    };
 };

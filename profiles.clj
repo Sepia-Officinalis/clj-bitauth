@@ -20,14 +20,14 @@
             [lein-doo "0.1.7"]]
 
   :npm {:dependencies [[slimerjs "0.906.2"
-                        phantomjs-prebuilt "2.1.9"
+                        phantomjs-prebuilt "2.1.12"
                         karma-cljs-test "0.1.0"
-                        karma-firefox-launcher "0.1.7"
-                        karma-chrome-launcher "0.2.2"
-                        karma "0.13.22"]]}
+                        karma-firefox-launcher "1.0.0"
+                        karma-chrome-launcher "2.0.0"
+                        karma "1.2.0"]]}
 
   :doo {:paths {:slimer    "./node_modules/.bin/slimerjs"
-                :phantomjs "./node_modules/.bin/phantomjs"
+                :phantom   "./node_modules/.bin/phantomjs"
                 :karma     "./node_modules/.bin/karma"}
         :alias {:headless [:slimer :phantom :nashorn]
                 :all      [:browsers :headless]}}
@@ -54,6 +54,7 @@
                           "test,"
                           "npm" "install,"
                           "doo" "all" "test" "once,"
+                          "clean,"
                           "doo" "all" "test-advanced" "once,"]
    "advanced-test"       ["test-advanced"]
    "devcards"            ["do"
@@ -63,6 +64,6 @@
                           "shell" "rm" "-rf" "figwheel_server.log" "node_modules,"
                           "clean"]}}
 
- :profiles/linux {:doo {:alias {:browsers [:chrome :firefox]}}}
+ :profiles/linux {:doo {:alias {:browsers [#_:chrome :firefox]}}}
  :profiles/osx {:doo {:alias {:browsers [:chrome :firefox :safari]}}
                 :npm {:dependencies [[karma-safari-launcher "1.0.0"]]}}}

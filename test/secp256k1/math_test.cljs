@@ -1,6 +1,6 @@
 (ns secp256k1.math-test
-  (:require [clojure.test :refer [is use-fixtures testing are]]
-            [devcards.core :refer [deftest defcard]]
+  (:require [clojure.test :refer-macros [is use-fixtures testing are]]
+            [devcards.core :refer-macros [deftest defcard]]
             [secp256k1.sjcl.bn.prime :as prime]
             [secp256k1.math :refer [modular-square-root]])
   (:import [secp256k1.math.random Isaac]

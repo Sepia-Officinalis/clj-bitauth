@@ -1,4 +1,4 @@
-(defproject secp256k1 "1.0.1"
+(defproject secp256k1 "1.0.3"
   :license {:name "MIT"
             :url "http://opensource.org/licenses/MIT"
             :distribution :repo}
@@ -8,11 +8,9 @@
   :jar-exclusions [#"\.DS_Store"]
   :source-paths ["src/clj" "src/cljs" "src/cljc" "src/js"]
   :test-paths ["test"]
-  :repositories [["jitpack" "https://jitpack.io"]]
-  :dependencies [[com.github.Sepia-Officinalis/sjcl-cljs "0.1.9"]
-                 [org.bouncycastle/bcprov-jdk15on "1.54"]
-                 [org.clojure/clojure "1.9.0-alpha10"]
-                 [org.clojure/clojurescript "1.9.198"]]
+  :dependencies [[org.bouncycastle/bcprov-jdk15on "1.55"]
+                 [org.clojure/clojure "1.8.0"]
+                 [org.clojure/clojurescript "1.9.229"]]
 
 
   :clean-targets ^{:protect false}

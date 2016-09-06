@@ -2,29 +2,33 @@
   "A ClojureScript implementation of ECDSA signatures with secp256k1"
 
   (:refer-clojure :exclude [even?])
-  (:require [secp256k1.formatting.der-encoding
-             :refer [DER-encode-ECDSA-signature
-                     DER-decode-ECDSA-signature]]
-            [secp256k1.math
-             :refer [modular-square-root
-                     even?
-                     secure-random]]
-            [secp256k1.formatting.base-convert
-             :refer [base-to-byte-array
-                     base-to-base
-                     byte-array-to-base
-                     base58?
-                     hex?]]
-            [secp256k1.sjcl.ecc.curves :as ecc-curves]
-            [secp256k1.sjcl.bn]
-            [secp256k1.hashes :refer [sha256 ripemd-160]]
-            [secp256k1.sjcl.bitArray :as bitArray]
-            [secp256k1.sjcl.codec.bytes :as bytes]
-            [secp256k1.sjcl.codec.hex :as hex])
+  (:require
+   [goog.string]
+   [goog.string.format]
+   [secp256k1.formatting.der-encoding
+    :refer [DER-encode-ECDSA-signature
+            DER-decode-ECDSA-signature]]
+   [secp256k1.math
+    :refer [modular-square-root
+            even?
+            secure-random]]
+   [secp256k1.formatting.base-convert
+    :refer [base-to-byte-array
+            base-to-base
+            byte-array-to-base
+            bytes?]]
+   [secp256k1.sjcl.ecc.curves :as ecc-curves]
+   [secp256k1.sjcl.ecc.ECPoint :as ecc-ecpoint]
+   [secp256k1.hashes :refer [sha256 ripemd-160 hmac-sha256]]
+   [secp256k1.sjcl.codec.bytes :as bytes]
+   [secp256k1.sjcl.codec.hex :as hex])
   (:import [secp256k1.sjcl bn]
            [secp256k1.sjcl.ecc ECPoint]))
 
-;;; CONSTANTS
+(defonce
+  ^:private
+  ^{:doc "The secp256k1 curve object provided by SJCL that is used often"}
+  curve ecc-curves/k256)
 
 (extend-protocol IEquiv
   bn
@@ -49,18 +53,11 @@
             (= ax bx)
             (= ay by)))))))
 
-(defonce
-  ^:private
-  ^{:doc "The secp256k1 curve object provided by SJCL that is used often"}
-  curve ecc-curves/k256)
-
 (defprotocol PrivateKey
   (private-key [this] [this base]))
 
 (extend-protocol PrivateKey
-
-  ;; Unboxed
-  bn
+  bn ; Unboxed
   (private-key
     ([priv-key _] (private-key priv-key))
     ([priv-key]
@@ -72,17 +69,25 @@
        "Private key should be less than or equal to the curve modulus")
      priv-key))
 
+  array ; byte-array
+  (private-key
+    ([priv-key _]
+     (private-key priv-key))
+    ([priv-key]
+     (private-key (base-to-base priv-key :bytes :biginteger))))
+
   string
   (private-key
     ([this base]
      (-> this
-       (base-to-base base :hex)
-       (->> (new bn))
+       (base-to-base base :biginteger)
        private-key))
     ([this]
      (private-key this :hex))))
 
-;; TODO: Use class method
+(defprotocol PublicKey
+  (public-key [this] [this base]))
+
 (defn- valid-point?
   "Predicate to determine if something is a valid ECC point on our curve"
   [point]
@@ -91,69 +96,85 @@
     (= (.-curve point) curve)
     (.isValid point)))
 
-(defprotocol PublicKey
-  (public-key [this] [this base]))
+(defn- compute-point
+  "Compute an elliptic curve point for a y-coordinate parity and x-coordinate"
+  [y-even x]
+  (let [modulus     (-> curve .-field .-modulus)
+        ;; √(x * (a + x**2) + b) % p
+        y-candidate (modular-square-root
+                     (.add
+                      (.multiply x (.add (.-a curve) (.square x)))
+                      (.-b curve))
+                     modulus)
+        y           (if (= y-even (even? y-candidate))
+                      y-candidate
+                      (.sub modulus y-candidate))]
+    (public-key (new ECPoint curve x y))))
 
-(defn- x962-decode
-  "Decode a x962-encoded public key from a hexadecimal string.
-
-  Reference implementation: https://github.com/indutny/elliptic/blob/master/lib/elliptic/curve/short.js#L188"
+(defn- x962-hex-compressed-decode
   [encoded-key]
-  (cond
-    (and (#{"02" "03"} (subs encoded-key 0 2))
-      (= 66 (count encoded-key)))
-    (let [x           (-> encoded-key
-                        (subs 2 66)
-                        (->> (new bn)))
-          y-even?     (= (subs encoded-key 0 2) "02")
-          modulus     (-> curve .-field .-modulus)
-          ;; √(x * (a + x**2) + b) % p
-          y-candidate (modular-square-root
-                        (.add
-                          (.mul x (.add (.-a curve) (.square x)))
-                          (.-b curve))
-                        modulus)
-          y           (if (= y-even? (even? y-candidate))
-                        y-candidate
-                        (.sub modulus y-candidate))]
-      (public-key
-        (new ECPoint curve x y)))
+  (let [x      (-> encoded-key (subs 2) bn.)
+        y-even (= (subs encoded-key 0 2) "02")]
+    (compute-point y-even x)))
 
-    (and (= "04" (subs encoded-key 0 2))
-      (= 130 (count encoded-key)))
-    (let [x (subs encoded-key 2 66)
-          y (subs encoded-key 66)]
-      (public-key
-        (new ECPoint curve x y)))
+(defn- x962-hex-uncompressed-decode
+  [encoded-key]
+  (let [l (-> curve .-r .bitLength (/ 4))
+        x (subs encoded-key 2 (+ 2 l))
+        y (subs encoded-key (+ 2 l))]
+    (public-key (new ECPoint curve x y))))
 
-    :else
-    (throw (ex-info "Invalid encoding on public key"
-             {:encoded-key encoded-key}))))
+(defn x962-decode
+  "Decode a X9.62 encoded public key"
+  [input & {:keys [input-format]
+            :or   {input-format :hex}}]
+  (let [encoded-key (base-to-base input input-format :hex)
+        l           (-> curve .-r .bitLength (/ 4))]
+    (cond
+      (and (#{"02" "03"} (subs encoded-key 0 2))
+           (= (+ 2 l) (count encoded-key)))
+      (x962-hex-compressed-decode encoded-key)
+
+      (and (= "04" (subs encoded-key 0 2))
+           (= (+ 2 (* 2 l)) (count encoded-key)))
+      (x962-hex-uncompressed-decode encoded-key)
+
+      :else
+      (throw (ex-info "Invalid encoding on public key"
+                      {:encoded-key encoded-key})))))
 
 (extend-protocol PublicKey
   ;; Unboxed
   ECPoint
   (public-key
     ([point _]
-     (public-key point))
+     (assert (valid-point? point) "Invalid point")
+     point)
     ([point]
      (assert (valid-point? point) "Invalid point")
      point))
 
+  array ; byte-array
+  (public-key
+    ([encoded-key _]
+     (x962-decode encoded-key :input-format :bytes))
+    ([encoded-key]
+     (x962-decode encoded-key :input-format :bytes)))
+
   string
   (public-key
     ([encoded-key base]
-     (-> encoded-key
-       (base-to-base base :hex)
-       x962-decode))
-
-    ([this] (public-key this :hex)))
+     (x962-decode encoded-key :input-format base))
+    ([encoded-key]
+     ;; Default to hex
+     (x962-decode encoded-key :input-format :hex)))
 
   bn
   (public-key
-    ([priv-key _] (public-key priv-key))
+    ([priv-key _]
+     (.multiply (.-G curve) (private-key priv-key)))
     ([priv-key]
-     (.mult (.-G curve) (private-key priv-key)))))
+     (.multiply (.-G curve) (private-key priv-key)))))
 
 (defn x962-encode
   "Encode a sjcl.ecc.point as hex using X9.62 compression"
@@ -172,12 +193,14 @@
           (str "04" x y)))
       (base-to-base :hex output-format))))
 
-;; TODO: Switch to bitcoin addresses, use SJCL to keep stuff DRY, use different input bases
+;; TODO: Switch to bitcoin addresses
 (defn get-sin-from-public-key
   "Generate a SIN from a public key"
-  [pub-key & {:keys [output-format]
-              :or   {output-format :base58}}]
+  [pub-key & {:keys [input-format output-format]
+              :or   {input-format :hex
+                     output-format :base58}}]
   (let [pub-prefixed (-> pub-key
+                         (public-key input-format)
                          (x962-encode :output-format :bytes)
                          sha256
                          ripemd-160
@@ -188,75 +211,211 @@
                           (take 4))]
     (byte-array-to-base (concat pub-prefixed checksum) output-format)))
 
-(defn generate-sin
-  "Generate a new private key, new public key, SIN and timestamp"
+(defn generate-address-pair
+  "Generate a new private key and new public key, along with a timestamp"
   []
   (let [priv-key (private-key (secure-random (.-r curve)))]
-    {:created (js/Date.now),
-     :priv    priv-key,
-     :pub     (public-key priv-key),
-     :sin     (get-sin-from-public-key priv-key)}))
+    {:created (new js/Date),
+     :private-key  priv-key,
+     :public-key (public-key priv-key)}))
 
-;; TODO: Optionally include recovery byte
+
+;; TODO: Implement BouncyCastle's Deterministic K generator
+(defn deterministic-generate-k
+  "Deterministically generate a random number in accordance with RFC 6979"
+  [priv-key hash]
+  (let [l            (-> curve .-r .bitLength)
+        curve-bytes  (/ l 8)
+        v            (repeat curve-bytes 0x01)
+        k            (repeat curve-bytes 0x00)
+        pk           (-> priv-key
+                         private-key
+                         (.toBits l)
+                         bytes/fromBits)
+        left-padding (repeat (- curve-bytes (count hash)) 0)
+        hash         (concat left-padding hash)
+        k            (hmac-sha256 k (concat v [0] pk hash))
+        v            (hmac-sha256 k v)
+        k            (hmac-sha256 k (concat v [1] pk hash))
+        v            (hmac-sha256 k v)]
+    (assert (= (count hash) curve-bytes)
+            "Hash should have the same number of bytes as the curve modulus")
+    (byte-array-to-base (hmac-sha256 k v) :biginteger)))
+
+(defn- compute-recovery-byte
+  "Compute a recovery byte (as a hex string) for a compressed ECDSA signature given R and S parameters"
+  [kp r s]
+  (let [n       (.-r curve)
+        big-r?  (.greaterEquals r n)
+        big-s?  (.greaterEquals (.add s s) n)
+        y-odd?  (-> kp .-y even? not)]
+    (-> 0x1B
+        (+ (if (not= big-s? y-odd?) 1 0))
+        (+ (if big-r? 2 0))
+        (.toString 16))))
+
+;; TODO: Add cannonical flag
+(defn sign-hash
+  "Sign some a hash of some data with a private-key"
+  [priv-key hash & {:keys [input-format
+                           output-format
+                           private-key-format
+                           recovery-byte]
+                    :or   {input-format :hex
+                           private-key-format :hex
+                           output-format :hex
+                           recovery-byte true}}]
+  (let [d     (private-key priv-key private-key-format)
+        n     (.-r curve)
+        l     (.bitLength n)
+        input (base-to-byte-array hash input-format)
+        z     (byte-array-to-base input :biginteger)
+        k     (deterministic-generate-k d input)
+        kp    (-> curve .-G (.multiply k))
+        r     (-> kp .-x (.mod n))
+        s_    (-> (.multiply r d) (.add z) (.multiply (.modInverse k n)) (.mod n))
+        s     (if (.greaterEquals (.add s_ s_) n)
+                (.sub n s_)
+                s_)]
+    (assert (= (count input) (-> curve .-r .bitLength (/ 8)))
+            "Hash should have the same number of bytes as the curve modulus")
+    (DER-encode-ECDSA-signature
+     {:R (-> r (.toBits l) hex/fromBits)
+      :S (-> s (.toBits l) hex/fromBits)
+      :recover (when recovery-byte (compute-recovery-byte kp r s_))}
+     :output-format output-format)))
+
+;; TODO: Add cannonical flag
 (defn sign
   "Sign some data with a private-key"
-  [priv-key data]
-  (let [d    (private-key priv-key)
-; TODO: use a better way of getting the length
-        n    (.-r curve)
-        l    (.bitLength n)
-        hash (-> data sha256 bytes/toBits)
-        z    (-> (if (> (bitArray/bitLength hash) l)
-                   (bitArray/clamp hash l)
-                   hash)
-                 secp256k1.sjcl.bn/fromBits)]
-    (loop []
-      ;; TODO: Use RFC 6979 here
-      (let [k (.add (secure-random (.sub n 1)) 1)
-            r (-> curve .-G (.mult k) .-x (.mod n))
-            s (-> (.mul r d) (.add z) (.mul (.inverseMod k n)) (.mod n))]
-        (cond (.equals r 0) (recur)
-              (.equals s 0) (recur)
-              :else
-              (DER-encode-ECDSA-signature
-               {:R (-> r (.toBits l) hex/fromBits)
-                :S (-> s (.toBits l) hex/fromBits)}))))))
+  [priv-key data & {:keys [output-format
+                           private-key-format
+                           recovery-byte]
+                    :or   {private-key-format :hex
+                           output-format :hex
+                           recovery-byte true}}]
+  (sign-hash priv-key
+             (sha256 data)
+             :input-format :bytes
+             :output-format output-format
+             :private-key-format private-key-format
+             :recovery-byte recovery-byte))
 
-;; TODO: Support Base58 encoding
+(defn ecrecover
+  "Given the components of a signature and a recovery value,
+  recover and return the public key that generated the
+  signature according to the algorithm in SEC1v2 section 4.1.6"
+  [hash recovery-byte r s]
+  (assert (= (-> curve .-r .bitLength (/ 8))  (count hash))
+          (goog.string/format "Hash should have %d bits (had %d)"
+                              (-> curve .-r .bitLength (/ 8))
+                              (count hash)))
+  (assert (and (instance? bn recovery-byte)
+               (.greaterEquals recovery-byte 0x1B)
+               (.greaterEquals (bn. 0x1E) recovery-byte))
+          (goog.string/format
+           "Recovery byte should be between 0x1B and 0x1E (was %s)"
+           (str recovery-byte)))
+  (let [y-even (even? (- recovery-byte 0x1B))
+        is-second-key? (odd? (-> recovery-byte
+                                 .toString
+                                 js/parseInt
+                                 (- 0x1B)
+                                 (bit-shift-right 1)))
+        n (.-r curve)
+        R (compute-point y-even (if is-second-key? (.add r n) r))
+        r-inv (.modInverse r n)
+        e-inv (.sub n (byte-array-to-base hash :biginteger))]
+    (-> (ecc-ecpoint/sumOfTwoMultiplies e-inv (.-G curve) s R)
+        (.multiply r-inv)
+        public-key)))
+
+(defn recover-public-key-from-hash
+  "Recover a public key from a hash"
+  [hash signature & {:keys [input-format]
+                     :or   {input-format :hex}}]
+  (let [{:keys [recover R S]}
+        (DER-decode-ECDSA-signature
+         signature
+         :input-format input-format
+         :output-format :biginteger)
+        hash (base-to-byte-array hash input-format)]
+    (ecrecover hash recover R S)))
+
+(defn recover-public-key
+  "Recover a public key from input and its signed hash"
+  [input signature & {:keys [input-format]
+                      :or   {input-format :hex}}]
+
+  (recover-public-key-from-hash
+   (sha256 input)
+   (base-to-byte-array signature input-format)
+   :input-format :bytes))
+
+(defn verify-ECDSA-signature-from-hash
+  "Verifies the given ASN.1 encoded ECDSA signature against a hash using a specified public key"
+  [key hash signature
+   & {:keys [input-format public-key-format]
+      :or   {input-format      :hex
+             public-key-format :hex}}]
+  (let [pub-key (public-key key public-key-format)
+        {r :R, s :S} (DER-decode-ECDSA-signature
+                      signature
+                      :input-format input-format
+                      :output-format :biginteger)
+        n            (.-r curve)
+        r            (.mod r n)
+        s-inv        (.modInverse s n)
+        z            (.mod (byte-array-to-base hash :biginteger) n)
+        u1           (-> z
+                         (.multiply s-inv)
+                         (.mod n))
+        u2           (-> r (.multiply s-inv) (.mod n))
+        r2           (-> (ecc-ecpoint/sumOfTwoMultiplies u1 (.-G curve) u2 pub-key)
+                         .-x (.mod n))]
+    (= r r2)))
+
+(defn verify-signature-from-hash
+  "Verifies the given ASN.1 encoded ECDSA signature against a hash using a specified public key"
+  [key hash signature & {:keys [input-format public-key-format]
+                         :or   {input-format      :hex
+                                public-key-format :hex}}]
+  (let [pub-key       (public-key key public-key-format)
+        input         (base-to-byte-array hash input-format)
+        sig-bytes     (base-to-byte-array signature input-format)
+        [head1 head2] (take 2 sig-bytes)]
+    (cond (and (#{0x1B 0x1C 0x1D 0x1E} head1) (= head2 0x30))
+          (= pub-key
+             (recover-public-key-from-hash input sig-bytes
+                                           :input-format :bytes))
+
+          (= head1 0x30)
+          (verify-ECDSA-signature-from-hash pub-key input sig-bytes
+                                            :input-format :bytes)
+
+          :else (throw (ex-info "Unknown signature header"
+                          {:key key
+                           :hash hash
+                           :signature signature})))))
+
 (defn verify-signature
   "Verifies that a string of data has been signed"
-  [key data hex-signature]
-  (and
-   (string? data)
-   (satisfies? PublicKey key)
-   (hex? hex-signature)
-   (try
-     (let [{r-hex :R,
-            s-hex :S} (DER-decode-ECDSA-signature hex-signature)
-           pub-key    (public-key key)
-           n          (.-r curve)
-           r          (-> (new bn r-hex) (.mod n))
-           s-inv      (-> (new bn s-hex) (.inverseMod n))
-           z          (-> data
-                          sha256
-                          bytes/toBits
-                          secp256k1.sjcl.bn/fromBits
-                          (.mod n))
-           u1         (-> z
-                          (.mul s-inv)
-                          (.mod n))
-           u2         (-> r (.mul s-inv) (.mod n))
-           r2         (-> curve .-G
-                          (.mult2 u1 u2 pub-key)
-                          .-x (.mod n))]
-       (= r r2))
-     (catch js/Error _ false))))
+  [pub-key data signature
+   & {:keys [input-format public-key-format]
+      :or   {input-format      :hex
+             public-key-format :hex}}]
+  (verify-signature-from-hash
+   (public-key pub-key public-key-format)
+   (sha256 data)
+   (base-to-byte-array signature input-format)
+   :input-format :bytes))
 
+;; TODO: Switch to BitCoin Addressess
+;; TODO: Get rid of try-swallow
 (defn validate-sin
   "Verify that a SIN is valid"
   [sin & {:keys [input-format]
           :or   {input-format :base58}}]
-  (try
     (let [pub-with-checksum (base-to-byte-array sin input-format)
           len               (count pub-with-checksum)
           expected-checksum (->> pub-with-checksum (drop 22) vec)
@@ -272,5 +431,4 @@
       (and
        (= len 26)
        (= prefix [0x0f 0x02])
-       (= expected-checksum actual-checksum)))
-    (catch js/Error _ false)))
+       (= expected-checksum actual-checksum))))

@@ -6,22 +6,21 @@
                       :refer [is use-fixtures
                               testing are run-tests deftest]]
                :cljs [cljs.test
-                      :refer [is use-fixtures testing are]])
+                      :refer-macros [is use-fixtures testing are]])
             #?(:cljs [devcards.core
-                      :refer [defcard deftest]])))
+                      :refer-macros [defcard deftest]])))
 
-;; TODO: Implement for clojurescript
-#?(:clj
-   (deftest hmac-SHA256
-     (testing "Returns the right result for reference HMAC-SHA256 values from wikipedia: https://en.wikipedia.org/wiki/Hash-based_message_authentication_code#Examples"
-       (is (= "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
-              (-> (hashes/hmac-sha256 "" "")
-                  (byte-array-to-base :hex))))
-       (is (= "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
-              (-> (hashes/hmac-sha256
-                   "key"
-                   "The quick brown fox jumps over the lazy dog")
-                  (byte-array-to-base :hex)))))))
+
+(deftest hmac-SHA256
+  (testing "Returns the right result for reference HMAC-SHA256 values from wikipedia: https://en.wikipedia.org/wiki/Hash-based_message_authentication_code#Examples"
+    (is (= "b613679a0814d9ec772f95d778c35fc5ff1697c493715653c6c712144292c5ad"
+           (-> (hashes/hmac-sha256 "" "")
+               (byte-array-to-base :hex))))
+    (is (= "f7bc83f430538424b13298e6aa6fb143ef4d59a14946175997479dbc2d1a3cd8"
+           (-> (hashes/hmac-sha256
+                "key"
+                "The quick brown fox jumps over the lazy dog")
+               (byte-array-to-base :hex))))))
 
 (deftest sha256-test
   (is

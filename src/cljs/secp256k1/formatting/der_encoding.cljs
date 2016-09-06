@@ -1,22 +1,21 @@
 (ns secp256k1.formatting.der-encoding
-  "A (simplified) implementation of the Distinguished Encoding Rules for ECDSA signatures,
-  using hexadecimal strings, and other formatting utilities.
+  "A (simplified) implementation of the Distinguished Encoding Rules
+  for ECDSA signatures, using hexadecimal strings, and other formatting
+  utilities.
 
   https://en.wikipedia.org/wiki/X.690#DER_encoding"
-  (:require [secp256k1.formatting.base-convert
-             :refer [hex? add-leading-zero-if-necessary
-                     base-to-base]]))
+  (:require
+   [clojure.string :refer [lower-case]]
+   [secp256k1.formatting.base-convert
+    :refer [hex?
+            add-leading-zero-if-necessary
+            base-to-byte-array
+            byte-array-to-base
+            base-to-base]]))
 
 (defn- encode-asn1-length
   [len]
-  (->>
-   (if (< len 0x80)
-     [len]
-     (throw (ex-info "Length is greater than or equal to 0x80, not supported"
-                     {:length len})))
-   (map #(.toString % 16))
-   (map add-leading-zero-if-necessary)
-   (apply str)))
+  (base-to-base len :biginteger :hex))
 
 (defn- decode-asn1-length
   [asn1]
@@ -31,16 +30,11 @@
 (defn- format-asn1-unsigned-integer
   "Formats a hexadecimal encoding an unsigned integer, dropping left zeros and padding with a left zero if necessary to avoid being confused for a two's complement"
   [n]
-  (let [bytes (->> n
-                   (partition 2)
-                   (map (partial apply str))
-                   (map #(js/parseInt % 16))
-                   (drop-while zero?))]
-    (->> (if-not (zero? (bit-and (first bytes) 0x80))
-           (conj bytes 0)
-           bytes)
-         (map #(add-leading-zero-if-necessary (.toString % 16)))
-         (apply str))))
+  (let [bytes (drop-while zero? (base-to-byte-array n :hex))]
+    (-> (if-not (zero? (bit-and (first bytes) 0x80))
+          (cons 0 bytes)
+          bytes)
+        (byte-array-to-base :hex))))
 
 (defn encode-asn1-unsigned-integer
   "Formats a hexadecimal as an unsigned integer, padding and prepending a length"
@@ -82,9 +76,10 @@
   "Decodes a list of numbers including an optional recovery byte, following BitCoin's convention"
   [asn1]
   (assert (hex? asn1), "Input must be hex")
-  (let [first-byte (subs asn1 0 2)]
+  (let [asn1 (lower-case asn1)
+        first-byte (subs asn1 0 2)]
     (cond
-      (#{ "1B" "1C" "1D" "1E"} first-byte)
+      (#{ "1b" "1c" "1d" "1e"} first-byte)
       (conj (DER-decode-standard (subs asn1 2))
             first-byte)
 
@@ -92,7 +87,7 @@
       (DER-decode-standard asn1)
 
       :else
-      (throw (ex-info "Input must start with the code 30, or start with a recovery code (either 1B, 1C, 1D, or 1E)"
+      (throw (ex-info "Input must start with the code 30, or start with a recovery code (either 1b, 1c, 1d, or 1e)"
                       {:argument asn1})))))
 
 (defn DER-encode
@@ -104,7 +99,6 @@
        encode-asn1-unsigned-integer
        (#(subs % 2))
        (str recover "30")))
-
 
 (defn DER-encode-ECDSA-signature
   "Formats an ECDSA signature"

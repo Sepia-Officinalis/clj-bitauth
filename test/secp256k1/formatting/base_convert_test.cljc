@@ -9,7 +9,8 @@
                               testing are run-tests deftest]]
                :cljs [cljs.test
                       :refer-macros [is use-fixtures testing are]])
-            #?(:cljs [devcards.core :refer-macros [deftest]])))
+            #?(:cljs [devcards.core :refer-macros [deftest]]))
+  #?(:cljs (:import [secp256k1.sjcl bn])))
 
 (deftest hex-test
   (is (= "05fb71a4f43ae66ac23544b87449b60bbb4874d18b3270eba29c5c057c7805a4"
@@ -103,5 +104,15 @@
                 "ගේම් ඔෆ් ත්‍රෝන්ස්"
                 :base64))
       "Sad path for parsing bytes from base 64 when the input is in Sinhala"))
+
+(deftest biginteger-test
+  (is (instance?
+       #?(:clj BigInteger
+          :cljs bn)
+       (byte-array-to-base [0xDE 0xAD 0xBE 0xEF] :biginteger)))
+  (is (= "deadbeef"
+         (-> 0xDEADBEEF
+             (base-to-byte-array :biginteger)
+             (byte-array-to-base :hex)))))
 
 (comment (run-tests))
