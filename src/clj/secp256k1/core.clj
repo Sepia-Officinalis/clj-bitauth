@@ -62,7 +62,7 @@
          (base-to-byte-array base)
          private-key))))
 
-(defn- valid-point?
+(defn valid-point?
   "Determine if an Secp256k1 point is valid"
   [point]
   (and (instance? org.bouncycastle.math.ec.ECPoint point)
