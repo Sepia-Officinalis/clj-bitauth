@@ -88,7 +88,7 @@
 (defprotocol PublicKey
   (public-key [this] [this base]))
 
-(defn- valid-point?
+(defn valid-point?
   "Predicate to determine if something is a valid ECC point on our curve"
   [point]
   (and
