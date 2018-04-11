@@ -126,6 +126,27 @@
                           (take 4))]
     (byte-array-to-base (concat pub-prefixed checksum) output-format)))
 
+(defn address-from-public-key
+  "Generate a (by default through network-byte 00) BTC address from
+  a public-key object."
+  [pub-key & {:keys [output-format network-byte]
+              :or   {output-format :base58 network-byte 00}}]
+  (let [pub-bytes (.getEncoded pub-key)
+        hashed (-> pub-bytes
+                   (x962-encode :output-format :bytes)
+                   sha256
+                   ripemd-160
+                   vec)
+        finalized (->> hashed
+                       (conj [network-byte])
+                       (flatten)
+                       (byte-array))
+        checksum (->> finalized
+                      sha256
+                      sha256
+                      (take 4))]
+    (byte-array-to-base (concat finalized checksum) output-format)))
+
 (defn generate-address-pair
   "Generate a new private key and new public key, along with a timestamp"
   []
