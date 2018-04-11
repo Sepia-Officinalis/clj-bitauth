@@ -25,7 +25,6 @@ The goals of this project are as follows:
 ✅ Deterministic ECDSA signatures via [RFC 6979](https://tools.ietf.org/html/rfc6979)<br/>
 ✅ Public Key recovery via BitCoin's [_recovery id_](https://github.com/bitcoin-core/secp256k1/blob/269d4227038b188128353235a272a8f030c307b1/include/secp256k1_recovery.h#L28) scheme<br/>
 ½ Access to browser native cryptographic primitives in [`crypto.subtle`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto)<br/>
-❌ Wrap the libsecp256k1 JNI provided by [BitCoin Core](https://github.com/bitcoin-core/secp256k1/tree/master/src/java)<br/>
 ❌ [Diffie-Helman](https://en.wikipedia.org/wiki/Diffie%E2%80%93Hellman_key_exchange) shared secrets<br/>
 
 ## Testing
